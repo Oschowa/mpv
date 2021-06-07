@@ -8,6 +8,7 @@
 #include "ao.h"
 #include "audio/format.h"
 #include "config.h"
+#include "generated/version.h"
 #include "internal.h"
 #include "osdep/timer.h"
 
@@ -222,7 +223,10 @@ static int init(struct ao *ao)
                         PW_KEY_MEDIA_TYPE, "Audio",
                         PW_KEY_MEDIA_CATEGORY, "Playback",
                         PW_KEY_MEDIA_ROLE, "Music",
-                        PW_KEY_NODE_NAME, "mpv",
+                        PW_KEY_NODE_NAME, ao->client_name,
+                        PW_KEY_APP_NAME, ao->client_name,
+                        PW_KEY_APP_ID, ao->client_name,
+                        PW_KEY_APP_ICON_NAME, ao->client_name,
                         PW_KEY_NODE_LATENCY, latency_str,
                         NULL),
                     &stream_events,
