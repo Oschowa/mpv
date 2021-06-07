@@ -1,6 +1,8 @@
 
 #include <pipewire/pipewire.h>
 #include <spa/param/audio/format-utils.h>
+#include <spa/param/props.h>
+#include <math.h>
 
 #include "common/msg.h"
 #include "options/m_config.h"
@@ -33,6 +35,8 @@ struct priv {
     struct pw_stream *stream;
 
     struct ao_pipewire_opts *opts;
+    bool muted;
+    float volume[2];
 };
 
 static enum spa_audio_format af_fmt_to_pw(enum af_format format)
@@ -151,11 +155,44 @@ static void on_state_changed(void *userdata, enum pw_stream_state old, enum pw_s
     }
 }
 
+static float spa_volume_to_mp_volume(float vol)
+{
+        return cbrt(vol) * 100;
+}
+
+static float mp_volume_to_spa_volume(float vol)
+{
+        vol /= 100;
+        return vol * vol * vol;
+}
+
+static void on_control_info(void *userdata, uint32_t id,
+        const struct pw_stream_control *control)
+{
+    struct ao *ao = userdata;
+    struct priv *p = ao->priv;
+
+    switch (id) {
+        case SPA_PROP_mute:
+            if (control->n_values == 1)
+                p->muted = control->values[0] >= 0.5;
+            break;
+        case SPA_PROP_channelVolumes:
+            if (control->n_values == 2) {
+                p->volume[0] = control->values[0];
+                p->volume[1] = control->values[1];
+            }
+            break;
+    }
+}
+
+
 static const struct pw_stream_events stream_events = {
     .version = PW_VERSION_STREAM_EVENTS,
     .param_changed = on_param_changed,
     .process = on_process,
     .state_changed = on_state_changed,
+    .control_info = on_control_info,
 };
 
 static void uninit(struct ao *ao)
@@ -269,6 +306,62 @@ static void start(struct ao *ao)
     pw_thread_loop_unlock(p->loop);
 }
 
+#define CONTROL_RET(r) (!r ? CONTROL_OK : CONTROL_ERROR)
+
+static int control(struct ao *ao, enum aocontrol cmd, void *arg)
+{
+    struct priv *p = ao->priv;
+
+    switch (cmd) {
+        case AOCONTROL_GET_VOLUME: {
+                struct ao_control_vol *vol = arg;
+                vol->left = spa_volume_to_mp_volume(p->volume[0]);
+                vol->right = spa_volume_to_mp_volume(p->volume[1]);
+                return CONTROL_OK;
+        }
+        case AOCONTROL_GET_MUTE: {
+                bool *muted = arg;
+                *muted = p->muted;
+                return CONTROL_OK;
+        }
+        case AOCONTROL_SET_VOLUME:
+        case AOCONTROL_SET_MUTE:
+        case AOCONTROL_UPDATE_STREAM_TITLE: {
+            int ret;
+
+            pw_thread_loop_lock(p->loop);
+            switch (cmd) {
+                case AOCONTROL_SET_VOLUME: {
+                    struct ao_control_vol *vol = arg;
+                    float left = mp_volume_to_spa_volume(vol->left), right = mp_volume_to_spa_volume(vol->right);
+                    ret = CONTROL_RET(pw_stream_set_control(p->stream, SPA_PROP_channelVolumes, 2, &left, &right));
+                    break;
+               }
+                case AOCONTROL_SET_MUTE: {
+                    bool *muted = arg;
+                    float value = *muted ? 1.f : 0.f;
+                    ret = CONTROL_RET(pw_stream_set_control(p->stream, SPA_PROP_mute, 1, &value));
+                    break;
+                }
+                case AOCONTROL_UPDATE_STREAM_TITLE: {
+                    char *title = arg;
+                    struct spa_dict_item items[1];
+                    items[0] = SPA_DICT_ITEM_INIT(PW_KEY_MEDIA_NAME, title);
+                    ret = CONTROL_RET(pw_stream_update_properties(p->stream, &SPA_DICT_INIT(items, MP_ARRAY_SIZE(items))));
+                    break;
+                }
+                default:
+                    ret = CONTROL_NA;
+            }
+            pw_thread_loop_unlock(p->loop);
+            return ret;
+        }
+        default:
+            return CONTROL_UNKNOWN;
+    }
+}
+
+
 const struct ao_driver audio_out_pipewire = {
     .description = "PipeWire audio output",
     .name        = "pipewire",
@@ -277,6 +370,8 @@ const struct ao_driver audio_out_pipewire = {
     .uninit      = uninit,
     .reset       = reset,
     .start       = start,
+
+    .control     = control,
 
     .priv_size = sizeof(struct priv),
     .priv_defaults = &(const struct priv)
