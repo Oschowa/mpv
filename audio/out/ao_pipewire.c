@@ -121,9 +121,9 @@ static void on_param_changed(void *userdata, uint32_t id, const struct spa_pod *
 {
     struct ao *ao = userdata;
     struct priv *p = ao->priv;
-	const struct spa_pod *params[1];
-	uint8_t buffer[1024];
-	struct spa_pod_builder b = SPA_POD_BUILDER_INIT(buffer, sizeof(buffer));
+    const struct spa_pod *params[1];
+    uint8_t buffer[1024];
+    struct spa_pod_builder b = SPA_POD_BUILDER_INIT(buffer, sizeof(buffer));
 
     if (param == NULL || id != SPA_PARAM_Format)
         return;
